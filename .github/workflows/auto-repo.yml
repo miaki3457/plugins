@@ -14,8 +14,14 @@ jobs:
 
       - name: Process Zips and Build repo.json
         run: |
-          mkdir -p output/plugins
-          echo "[]" > output/repo.json
+          # 建立絕對路徑變數
+          ROOT_DIR=$(pwd)
+          OUT_DIR="$ROOT_DIR/output"
+          PLUGINS_OUT="$OUT_DIR/plugins"
+          
+          mkdir -p "$PLUGINS_OUT"
+          echo "[]" > "$OUT_DIR/repo.json"
+          
           BASE_URL="https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}"
 
           for zipfile in plugins/*.zip; do
@@ -24,34 +30,38 @@ jobs:
             echo "正在處理: $filename"
             
             # 建立臨時工作目錄
-            mkdir -p temp_work
-            unzip -q "$zipfile" -d temp_work
+            TMP_WORK="$ROOT_DIR/temp_$(date +%s)"
+            mkdir -p "$TMP_WORK"
+            unzip -q "$zipfile" -d "$TMP_WORK"
             
-            # 自動尋找描述檔 (無視層級)
-            manifest_path=$(find temp_work -name "*.json" -exec grep -l "InternalName" {} + | head -n 1)
+            # 自動尋找描述檔 (包含 InternalName 欄位的 JSON)
+            manifest_path=$(find "$TMP_WORK" -name "*.json" -exec grep -l "InternalName" {} + | head -n 1)
             
             if [ -z "$manifest_path" ]; then
-              echo "跳過 $filename: 找不到描述檔"
-              rm -rf temp_work
+              echo "跳過 $filename: 找不到有效描述檔"
+              rm -rf "$TMP_WORK"
               continue
             fi
 
-            # 獲取描述檔所在目錄，並重新打包該目錄下的所有檔案到根目錄
+            # 獲取描述檔所在目錄，並重新打包
             plugin_dir=$(dirname "$manifest_path")
+            
+            # 進入插件目錄並將內容壓入 output 目錄下的同名 zip
             cd "$plugin_dir"
-            zip -r "../../../output/plugins/$filename" ./*
-            cd ../../../
-
-            # 提取描述檔資訊並注入下載連結
+            zip -r "$PLUGINS_OUT/$filename" ./*
+            
+            # 回到根目錄處理 JSON 資訊
+            cd "$ROOT_DIR"
             jq -c 'select(.InternalName != null)' "$manifest_path" > temp_meta.json
+            
             DOWNLOAD_URL="${BASE_URL}/plugins/${filename}"
             jq --arg url "$DOWNLOAD_URL" '. + {DownloadLinkInstall: $url}' temp_meta.json > single_plugin.json
             
             # 合併到 repo.json
-            jq -s '.[0] + .[1]' output/repo.json "[$(cat single_plugin.json)]" > output/new_repo.json
-            mv output/new_repo.json output/repo.json
+            jq -s '.[0] + .[1]' "$OUT_DIR/repo.json" "[$(cat single_plugin.json)]" > "$OUT_DIR/new_repo.json"
+            mv "$OUT_DIR/new_repo.json" "$OUT_DIR/repo.json"
             
-            rm -rf temp_work temp_meta.json single_plugin.json
+            rm -rf "$TMP_WORK" temp_meta.json single_plugin.json
           done
 
       - name: Deploy to GitHub Pages
