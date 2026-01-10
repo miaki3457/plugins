@@ -1,17 +1,17 @@
 name: Auto Correct and Generate Repo
 on:
   push:
-    branches: [ main ]
-    paths:
-      - 'plugins/**.zip'
+    branches: [ zips ]  # 只有當你上傳東西到 zips 分支時才執行
   workflow_dispatch:
 
 jobs:
   generate-repo:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout code
+      - name: Checkout zips branch (Source)
         uses: actions/checkout@v3
+        with:
+          ref: zips  # 抓取 zips 分支的檔案
 
       - name: Process Zips and Build repo.json
         run: |
@@ -22,10 +22,12 @@ jobs:
           mkdir -p "$PLUGINS_OUT"
           echo "[]" > "$OUT_DIR/repo.json"
           
-          echo "# 我的插件訂閱源 (My Plugin Repo)" > "$OUT_DIR/index.md"
-          echo "最後更新日期: $(date +'%Y-%m-%d %H:%M:%S')" >> "$OUT_DIR/index.md"
-          echo "" >> "$OUT_DIR/index.md"
-          echo "| 插件名稱 | 版本號 | 敘述 |" >> "$OUT_DIR/index.md"
+          # 生成 index.md (網頁首頁)
+          echo "---" > "$OUT_DIR/index.md"
+          echo "layout: default" >> "$OUT_DIR/index.md"
+          echo "---" >> "$OUT_DIR/index.md"
+          echo "# 插件列表" >> "$OUT_DIR/index.md"
+          echo "| 名稱 | 版本 | 描述 |" >> "$OUT_DIR/index.md"
           echo "| :--- | :--- | :--- |" >> "$OUT_DIR/index.md"
           
           BASE_URL="https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}"
@@ -33,32 +35,21 @@ jobs:
           for zipfile in plugins/*.zip; do
             [ -e "$zipfile" ] || continue
             filename=$(basename "$zipfile")
-            echo "正在處理: $filename"
             
             TMP_WORK="$ROOT_DIR/temp_$(date +%s)"
             mkdir -p "$TMP_WORK"
-            
-            # 【關鍵修復】使用 -qq 靜默模式，並嘗試解壓縮
-            # 如果 zip 含有反斜線，unzip 在 Linux 有時會報錯，這裡加上 || true 確保繼續執行
             unzip -q "$zipfile" -d "$TMP_WORK" || true
             
-            # 尋找描述檔 (加上 -i 忽略大小寫，並增加搜尋穩定性)
             manifest_path=$(find "$TMP_WORK" -name "*.json" -exec grep -l "InternalName" {} + | head -n 1)
-            
-            if [ -z "$manifest_path" ]; then
-              echo "跳過 $filename: 找不到有效描述檔，可能是 ZIP 損壞或路徑編碼問題"
-              rm -rf "$TMP_WORK"
-              continue
-            fi
+            if [ -z "$manifest_path" ]; then rm -rf "$TMP_WORK"; continue; fi
 
             plugin_dir=$(dirname "$manifest_path")
             cd "$plugin_dir"
-            # 重新打包成標準 ZIP，這會自動修正路徑為 Linux 標準斜線
             zip -r "$PLUGINS_OUT/$filename" ./*
             cd "$ROOT_DIR"
             
-            DOWNLOAD_URL="${BASE_URL}/plugins/${filename}"
-            jq -c --arg url "$DOWNLOAD_URL" 'select(.InternalName != null) | . + {DownloadLinkInstall: $url}' "$manifest_path" > single_plugin.json
+            # 生成 JSON
+            jq -c --arg url "${BASE_URL}/plugins/${filename}" 'select(.InternalName != null) | . + {DownloadLinkInstall: $url}' "$manifest_path" > single_plugin.json
             
             # 寫入表格
             P_NAME=$(jq -r '.Name' single_plugin.json)
@@ -66,12 +57,14 @@ jobs:
             P_DESC=$(jq -r '.Description' single_plugin.json | tr '\n' ' ' | sed 's/|/\\|/g')
             echo "| $P_NAME | $P_VER | $P_DESC |" >> "$OUT_DIR/index.md"
 
-            # 合併 JSON
             jq --slurpfile new single_plugin.json '. + $new' "$OUT_DIR/repo.json" > "$OUT_DIR/new_repo.json"
             mv "$OUT_DIR/new_repo.json" "$OUT_DIR/repo.json"
-            
             rm -rf "$TMP_WORK" single_plugin.json
           done
+          
+          # 【關鍵防護】在輸出的 plugins 資料夾放一個空白首頁，防止別人目錄瀏覽
+          touch "$PLUGINS_OUT/index.html"
+          touch "$OUT_DIR/.nojekyll"
 
       - name: Deploy to GitHub Pages
         uses: peaceiris/actions-gh-pages@v3
