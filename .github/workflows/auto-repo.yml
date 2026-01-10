@@ -4,6 +4,7 @@ on:
     branches: [ main ]
     paths:
       - 'plugins/**.zip'
+  workflow_dispatch: # 👈 加入這行，即可在 Actions 頁面看到手動執行按鈕
 
 jobs:
   generate-repo:
@@ -14,7 +15,6 @@ jobs:
 
       - name: Process Zips and Build repo.json
         run: |
-          # 建立絕對路徑變數
           ROOT_DIR=$(pwd)
           OUT_DIR="$ROOT_DIR/output"
           PLUGINS_OUT="$OUT_DIR/plugins"
@@ -29,12 +29,10 @@ jobs:
             filename=$(basename "$zipfile")
             echo "正在處理: $filename"
             
-            # 建立臨時工作目錄
             TMP_WORK="$ROOT_DIR/temp_$(date +%s)"
             mkdir -p "$TMP_WORK"
             unzip -q "$zipfile" -d "$TMP_WORK"
             
-            # 自動尋找描述檔 (包含 InternalName 欄位的 JSON)
             manifest_path=$(find "$TMP_WORK" -name "*.json" -exec grep -l "InternalName" {} + | head -n 1)
             
             if [ -z "$manifest_path" ]; then
@@ -43,21 +41,17 @@ jobs:
               continue
             fi
 
-            # 獲取描述檔所在目錄，並重新打包
             plugin_dir=$(dirname "$manifest_path")
             
-            # 進入插件目錄並將內容壓入 output 目錄下的同名 zip
             cd "$plugin_dir"
             zip -r "$PLUGINS_OUT/$filename" ./*
             
-            # 回到根目錄處理 JSON 資訊
             cd "$ROOT_DIR"
             jq -c 'select(.InternalName != null)' "$manifest_path" > temp_meta.json
             
             DOWNLOAD_URL="${BASE_URL}/plugins/${filename}"
             jq --arg url "$DOWNLOAD_URL" '. + {DownloadLinkInstall: $url}' temp_meta.json > single_plugin.json
             
-            # 合併到 repo.json
             jq -s '.[0] + .[1]' "$OUT_DIR/repo.json" "[$(cat single_plugin.json)]" > "$OUT_DIR/new_repo.json"
             mv "$OUT_DIR/new_repo.json" "$OUT_DIR/repo.json"
             
