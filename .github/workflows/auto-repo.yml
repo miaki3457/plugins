@@ -1,4 +1,4 @@
-name: Auto Generate Repo from Zip
+name: Auto Correct and Generate Repo
 on:
   push:
     branches: [ main ]
@@ -12,26 +12,51 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v3
 
-      - name: Extract Metadata and Build repo.json
+      - name: Process Zips and Build repo.json
         run: |
-          echo "[]" > repo.json
+          mkdir -p output/plugins
+          echo "[]" > output/repo.json
           BASE_URL="https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}"
 
           for zipfile in plugins/*.zip; do
             [ -e "$zipfile" ] || continue
-            filename=$(basename "$zipfile" .zip)
-            unzip -p "$zipfile" "*.json" | jq -c 'select(.InternalName != null)' > temp_meta.json
-            if [ ! -s temp_meta.json ]; then continue; fi
+            filename=$(basename "$zipfile")
+            echo "正在處理: $filename"
+            
+            # 建立臨時工作目錄
+            mkdir -p temp_work
+            unzip -q "$zipfile" -d temp_work
+            
+            # 自動尋找描述檔 (無視層級)
+            manifest_path=$(find temp_work -name "*.json" -exec grep -l "InternalName" {} + | head -n 1)
+            
+            if [ -z "$manifest_path" ]; then
+              echo "跳過 $filename: 找不到描述檔"
+              rm -rf temp_work
+              continue
+            fi
 
-            DOWNLOAD_URL="${BASE_URL}/plugins/${filename}.zip"
+            # 獲取描述檔所在目錄，並重新打包該目錄下的所有檔案到根目錄
+            plugin_dir=$(dirname "$manifest_path")
+            cd "$plugin_dir"
+            zip -r "../../../output/plugins/$filename" ./*
+            cd ../../../
+
+            # 提取描述檔資訊並注入下載連結
+            jq -c 'select(.InternalName != null)' "$manifest_path" > temp_meta.json
+            DOWNLOAD_URL="${BASE_URL}/plugins/${filename}"
             jq --arg url "$DOWNLOAD_URL" '. + {DownloadLinkInstall: $url}' temp_meta.json > single_plugin.json
-            jq -s '.[0] + .[1]' repo.json "[$(cat single_plugin.json)]" > new_repo.json
-            mv new_repo.json repo.json
+            
+            # 合併到 repo.json
+            jq -s '.[0] + .[1]' output/repo.json "[$(cat single_plugin.json)]" > output/new_repo.json
+            mv output/new_repo.json output/repo.json
+            
+            rm -rf temp_work temp_meta.json single_plugin.json
           done
 
       - name: Deploy to GitHub Pages
         uses: peaceiris/actions-gh-pages@v3
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: .
-          publish_branch: gh-pages # 這是關鍵，成品會放在這
+          publish_dir: ./output
+          publish_branch: gh-pages
