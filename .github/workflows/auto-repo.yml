@@ -4,7 +4,7 @@ on:
     branches: [ main ]
     paths:
       - 'plugins/**.zip'
-  workflow_dispatch: # 👈 加入這行，即可在 Actions 頁面看到手動執行按鈕
+  workflow_dispatch:
 
 jobs:
   generate-repo:
@@ -22,6 +22,13 @@ jobs:
           mkdir -p "$PLUGINS_OUT"
           echo "[]" > "$OUT_DIR/repo.json"
           
+          # 初始化 index.md 表格標頭
+          echo "# 我的插件訂閱源 (My Plugin Repo)" > "$OUT_DIR/index.md"
+          echo "最後更新日期: $(date +'%Y-%m-%d %H:%M:%S')" >> "$OUT_DIR/index.md"
+          echo "" >> "$OUT_DIR/index.md"
+          echo "| 插件名稱 | 版本號 | 敘述 |" >> "$OUT_DIR/index.md"
+          echo "| :--- | :--- | :--- |" >> "$OUT_DIR/index.md"
+          
           BASE_URL="https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}"
 
           for zipfile in plugins/*.zip; do
@@ -36,26 +43,30 @@ jobs:
             manifest_path=$(find "$TMP_WORK" -name "*.json" -exec grep -l "InternalName" {} + | head -n 1)
             
             if [ -z "$manifest_path" ]; then
-              echo "跳過 $filename: 找不到有效描述檔"
               rm -rf "$TMP_WORK"
               continue
             fi
 
             plugin_dir=$(dirname "$manifest_path")
-            
             cd "$plugin_dir"
             zip -r "$PLUGINS_OUT/$filename" ./*
-            
             cd "$ROOT_DIR"
-            jq -c 'select(.InternalName != null)' "$manifest_path" > temp_meta.json
             
+            # 處理 JSON 邏輯
             DOWNLOAD_URL="${BASE_URL}/plugins/${filename}"
-            jq --arg url "$DOWNLOAD_URL" '. + {DownloadLinkInstall: $url}' temp_meta.json > single_plugin.json
+            jq -c --arg url "$DOWNLOAD_URL" 'select(.InternalName != null) | . + {DownloadLinkInstall: $url}' "$manifest_path" > single_plugin.json
             
-            jq -s '.[0] + .[1]' "$OUT_DIR/repo.json" "[$(cat single_plugin.json)]" > "$OUT_DIR/new_repo.json"
+            # 【新功能】將資訊寫入表格
+            P_NAME=$(jq -r '.Name' single_plugin.json)
+            P_VER=$(jq -r '.AssemblyVersion' single_plugin.json)
+            P_DESC=$(jq -r '.Description' single_plugin.json | tr '\n' ' ') # 移除換行避免表格破裂
+            echo "| $P_NAME | $P_VER | $P_DESC |" >> "$OUT_DIR/index.md"
+
+            # 合併 JSON
+            jq --slurpfile new single_plugin.json '. + $new' "$OUT_DIR/repo.json" > "$OUT_DIR/new_repo.json"
             mv "$OUT_DIR/new_repo.json" "$OUT_DIR/repo.json"
             
-            rm -rf "$TMP_WORK" temp_meta.json single_plugin.json
+            rm -rf "$TMP_WORK" single_plugin.json
           done
 
       - name: Deploy to GitHub Pages
