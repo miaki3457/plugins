@@ -22,13 +22,19 @@ jobs:
           mkdir -p "$PLUGINS_OUT"
           echo "[]" > "$OUT_DIR/repo.json"
           
-          # 生成 index.md (網頁首頁)
-          echo "---" > "$OUT_DIR/index.md"
-          echo "layout: default" >> "$OUT_DIR/index.md"
-          echo "---" >> "$OUT_DIR/index.md"
-          echo "# 插件列表" >> "$OUT_DIR/index.md"
-          echo "| 名稱 | 版本 | 描述 |" >> "$OUT_DIR/index.md"
-          echo "| :--- | :--- | :--- |" >> "$OUT_DIR/index.md"
+          # 生成 index.md (使用 cat <<EOF 確保格式絕對正確)
+          cat <<EOF > "$OUT_DIR/index.md"
+          ---
+          
+          # 插件列表
+          > **最後更新時間：** $(date +'%Y-%m-%d %H:%M:%S')
+          
+          將此網址複製到 Dalamud 的 Plugin Repos: 
+          \`https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/repo.json\`
+          
+          | 名稱 | 版本 | 描述 |
+          | :--- | :--- | :--- |
+          EOF
           
           BASE_URL="https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}"
 
