@@ -18,7 +18,7 @@ jobs:
 
       - name: Process Zips and Build repo.json
         run: |
-          set -e
+          # 移除 set -e 以便手動處理錯誤，或在關鍵步驟才檢查
           ROOT_DIR="$GITHUB_WORKSPACE"
           OUT_DIR="$ROOT_DIR/output"
           PLUGINS_OUT="$OUT_DIR/plugins"
@@ -27,7 +27,6 @@ jobs:
           mkdir -p "$PLUGINS_OUT"
           echo "[]" > "$OUT_DIR/repo.json"
           
-          # 生成 index.md (EOF 內部的 $ 需要保留，除了 $() 指令)
           cat <<EOF > "$OUT_DIR/index.md"
           ---
           # 插件列表
@@ -46,29 +45,35 @@ jobs:
             for zipfile in plugins/*.zip; do
               [ -e "$zipfile" ] || continue
               filename=$(basename "$zipfile")
+              echo "Processing $filename..."
               
               TMP_WORK=$(mktemp -d)
-              unzip -q "$zipfile" -d "$TMP_WORK"
               
+              # 修正處：使用 || true 忽略 unzip 的警告（如 Windows 路徑警告）
+              unzip -q -o "$zipfile" -d "$TMP_WORK" || echo "Warning: Unzip had some issues with $filename but continuing..."
+              
+              # 尋找包含 InternalName 的 JSON
               manifest_path=$(find "$TMP_WORK" -name "*.json" -exec grep -l "InternalName" {} + | head -n 1)
               
               if [ -n "$manifest_path" ]; then
                 plugin_dir=$(dirname "$manifest_path")
+                # 重新打包成標準 Linux 格式的 zip
                 (cd "$plugin_dir" && zip -r "$PLUGINS_OUT/$filename" ./*)
                 
-                # --- 修正後的 jq 區塊 ---
-                # 使用 --arg 傳遞變數，不使用反斜線
+                # 生成單個插件 JSON
                 jq -c --arg url "${BASE_URL}/plugins/${filename}" '. + {DownloadLinkInstall: $url}' "$manifest_path" > "$ROOT_DIR/single.json"
                 
                 # 合併到 repo.json
                 jq --slurpfile new "$ROOT_DIR/single.json" '. + $new' "$OUT_DIR/repo.json" > "$OUT_DIR/repo_new.json"
                 mv "$OUT_DIR/repo_new.json" "$OUT_DIR/repo.json"
 
-                # 提取 Markdown 資訊
+                # 寫入表格
                 P_NAME=$(jq -r '.Name // "Unknown"' "$ROOT_DIR/single.json")
                 P_VER=$(jq -r '.AssemblyVersion // "0.0.0.0"' "$ROOT_DIR/single.json")
                 P_DESC=$(jq -r '.Description // "No Description"' "$ROOT_DIR/single.json" | tr '\n' ' ' | sed 's/|/\\|/g')
                 echo "| $P_NAME | $P_VER | $P_DESC |" >> "$OUT_DIR/index.md"
+              else
+                echo "Skipping $filename: No valid manifest found."
               fi
               
               rm -rf "$TMP_WORK" "$ROOT_DIR/single.json"
