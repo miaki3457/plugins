@@ -25,8 +25,6 @@ jobs:
           # 生成 index.md (使用 cat <<EOF 確保格式絕對正確)
           cat <<EOF > "$OUT_DIR/index.md"
           ---
-          layout: default
-          title: 插件列表
           ---
           
           # 插件列表
