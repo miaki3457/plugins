@@ -25,7 +25,6 @@ jobs:
           # 生成 index.md (使用 cat <<EOF 確保格式絕對正確)
           cat <<EOF > "$OUT_DIR/index.md"
           ---
-          ---
           
           # 插件列表
           > **最後更新時間：** $(date +'%Y-%m-%d %H:%M:%S')
