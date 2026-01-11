@@ -2,14 +2,14 @@ name: Auto Correct and Generate Repo
 
 on:
   push:
-    branches: [ zips ]  # 只有當你上傳東西到 zips 分支時才執行
+    branches: [ zips ]
   workflow_dispatch:
 
 jobs:
   generate-repo:
     runs-on: ubuntu-latest
     env:
-      TZ: Asia/Taipei  # 設定環境變數為台灣時間
+      TZ: Asia/Taipei
     steps:
       - name: Checkout zips branch (Source)
         uses: actions/checkout@v3
@@ -19,19 +19,15 @@ jobs:
       - name: Process Zips and Build repo.json
         run: |
           set -e
-          # 建立路徑變數
           ROOT_DIR="$GITHUB_WORKSPACE"
           OUT_DIR="$ROOT_DIR/output"
           PLUGINS_OUT="$OUT_DIR/plugins"
           
-          # 1. 清理並建立輸出資料夾
           rm -rf "$OUT_DIR"
           mkdir -p "$PLUGINS_OUT"
-          
-          # 2. 初始化 repo.json 為空陣列
           echo "[]" > "$OUT_DIR/repo.json"
           
-          # 3. 生成 index.md 表頭
+          # 生成 index.md (EOF 內部的 $ 需要保留，除了 $() 指令)
           cat <<EOF > "$OUT_DIR/index.md"
           ---
           # 插件列表
@@ -46,44 +42,39 @@ jobs:
           
           BASE_URL="https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}"
 
-          # 4. 開始處理 plugins 資料夾內的 zip
           if [ -d "plugins" ]; then
             for zipfile in plugins/*.zip; do
               [ -e "$zipfile" ] || continue
               filename=$(basename "$zipfile")
               
-              # 建立獨立暫存區
               TMP_WORK=$(mktemp -d)
               unzip -q "$zipfile" -d "$TMP_WORK"
               
-              # 尋找包含 InternalName 的 JSON 檔案
               manifest_path=$(find "$TMP_WORK" -name "*.json" -exec grep -l "InternalName" {} + | head -n 1)
               
               if [ -n "$manifest_path" ]; then
-                # 重新打包插件內容 (確保路徑結構正確)
                 plugin_dir=$(dirname "$manifest_path")
                 (cd "$plugin_dir" && zip -r "$PLUGINS_OUT/$filename" ./*)
                 
-                # 生成單個插件的臨時 JSON 檔案
-                jq -c --arg url "\${BASE_URL}/plugins/\${filename}" '. + {DownloadLinkInstall: \$url}' "$manifest_path" > "$ROOT_DIR/single.json"
+                # --- 修正後的 jq 區塊 ---
+                # 使用 --arg 傳遞變數，不使用反斜線
+                jq -c --arg url "${BASE_URL}/plugins/${filename}" '. + {DownloadLinkInstall: $url}' "$manifest_path" > "$ROOT_DIR/single.json"
                 
-                # 將單個插件資訊合併到主 repo.json
-                jq --slurpfile new "$ROOT_DIR/single.json" '. + \$new' "$OUT_DIR/repo.json" > "$OUT_DIR/repo_new.json"
+                # 合併到 repo.json
+                jq --slurpfile new "$ROOT_DIR/single.json" '. + $new' "$OUT_DIR/repo.json" > "$OUT_DIR/repo_new.json"
                 mv "$OUT_DIR/repo_new.json" "$OUT_DIR/repo.json"
 
-                # 提取資訊並寫入 Markdown 表格
+                # 提取 Markdown 資訊
                 P_NAME=$(jq -r '.Name // "Unknown"' "$ROOT_DIR/single.json")
                 P_VER=$(jq -r '.AssemblyVersion // "0.0.0.0"' "$ROOT_DIR/single.json")
                 P_DESC=$(jq -r '.Description // "No Description"' "$ROOT_DIR/single.json" | tr '\n' ' ' | sed 's/|/\\|/g')
-                echo "| \$P_NAME | \$P_VER | \$P_DESC |" >> "$OUT_DIR/index.md"
+                echo "| $P_NAME | $P_VER | $P_DESC |" >> "$OUT_DIR/index.md"
               fi
               
-              # 清理當次循環的暫存
               rm -rf "$TMP_WORK" "$ROOT_DIR/single.json"
             done
           fi
           
-          # 5. 安全與防護檔案
           touch "$PLUGINS_OUT/index.html"
           touch "$OUT_DIR/.nojekyll"
 
