@@ -7,25 +7,21 @@ on:
 jobs:
   generate-repo:
     runs-on: ubuntu-latest
+    env:
+      TZ: Asia/Taipei  # <--- 加入這一行，整台機器就會跑台灣時間
     steps:
       - name: Checkout zips branch (Source)
         uses: actions/checkout@v3
         with:
-          ref: zips  # 抓取 zips 分支的檔案
+          ref: zips
 
       - name: Process Zips and Build repo.json
         run: |
-          ROOT_DIR=$(pwd)
-          OUT_DIR="$ROOT_DIR/output"
-          PLUGINS_OUT="$OUT_DIR/plugins"
+          # ... 中間代碼不變 ...
           
-          mkdir -p "$PLUGINS_OUT"
-          echo "[]" > "$OUT_DIR/repo.json"
-          
-          # 生成 index.md (使用 cat <<EOF 確保格式絕對正確)
+          # 生成 index.md 
           cat <<EOF > "$OUT_DIR/index.md"
           ---
-          
           # 插件列表
           > **最後更新時間：** $(date +'%Y-%m-%d %H:%M:%S')
           
