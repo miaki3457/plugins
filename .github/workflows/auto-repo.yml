@@ -1,4 +1,5 @@
 name: Auto Correct and Generate Repo
+
 on:
   push:
     branches: [ zips ]  # 只有當你上傳東西到 zips 分支時才執行
@@ -8,28 +9,29 @@ jobs:
   generate-repo:
     runs-on: ubuntu-latest
     env:
-      TZ: Asia/Taipei  # 設定時區為台灣時間
+      TZ: Asia/Taipei  # 設定環境變數為台灣時間
     steps:
       - name: Checkout zips branch (Source)
         uses: actions/checkout@v3
         with:
-          ref: zips  # 抓取 zips 分支的檔案
+          ref: zips
 
       - name: Process Zips and Build repo.json
         run: |
-          set -e  # 遇到錯誤立即停止，方便排查
-          ROOT_DIR=$(pwd)
+          set -e
+          # 建立路徑變數
+          ROOT_DIR="$GITHUB_WORKSPACE"
           OUT_DIR="$ROOT_DIR/output"
           PLUGINS_OUT="$OUT_DIR/plugins"
           
-          # 1. 確保輸出目錄乾淨
+          # 1. 清理並建立輸出資料夾
           rm -rf "$OUT_DIR"
           mkdir -p "$PLUGINS_OUT"
           
-          # 2. 初始化空的 repo.json 陣列
+          # 2. 初始化 repo.json 為空陣列
           echo "[]" > "$OUT_DIR/repo.json"
           
-          # 3. 生成 index.md (使用台灣時間)
+          # 3. 生成 index.md 表頭
           cat <<EOF > "$OUT_DIR/index.md"
           ---
           # 插件列表
@@ -44,44 +46,44 @@ jobs:
           
           BASE_URL="https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}"
 
-          # 檢查是否有插件目錄
+          # 4. 開始處理 plugins 資料夾內的 zip
           if [ -d "plugins" ]; then
             for zipfile in plugins/*.zip; do
               [ -e "$zipfile" ] || continue
               filename=$(basename "$zipfile")
               
-              TMP_WORK="$ROOT_DIR/temp_$(date +%s)_$filename"
-              mkdir -p "$TMP_WORK"
-              unzip -q "$zipfile" -d "$TMP_WORK" || true
+              # 建立獨立暫存區
+              TMP_WORK=$(mktemp -d)
+              unzip -q "$zipfile" -d "$TMP_WORK"
               
-              # 尋找包含 InternalName 的 manifest
+              # 尋找包含 InternalName 的 JSON 檔案
               manifest_path=$(find "$TMP_WORK" -name "*.json" -exec grep -l "InternalName" {} + | head -n 1)
               
               if [ -n "$manifest_path" ]; then
-                # 重新打包插件內容
+                # 重新打包插件內容 (確保路徑結構正確)
                 plugin_dir=$(dirname "$manifest_path")
                 (cd "$plugin_dir" && zip -r "$PLUGINS_OUT/$filename" ./*)
                 
-                # 生成單個插件的 JSON (加入下載連結)
-                jq -c --arg url "${BASE_URL}/plugins/${filename}" '. + {DownloadLinkInstall: $url}' "$manifest_path" > single_plugin.json
+                # 生成單個插件的臨時 JSON 檔案
+                jq -c --arg url "\${BASE_URL}/plugins/\${filename}" '. + {DownloadLinkInstall: \$url}' "$manifest_path" > "$ROOT_DIR/single.json"
                 
-                # --- 關鍵修正：確保合併進陣列 ---
-                # 使用 += [$new_node] 確保物件被包成陣列後再合併
-                jq --argjson new_node "$(cat single_plugin.json)" '. += [$new_node]' "$OUT_DIR/repo.json" > "$OUT_DIR/new_repo.json"
-                mv "$OUT_DIR/new_repo.json" "$OUT_DIR/repo.json"
-                
-                # 寫入 Markdown 表格 (處理 Description 為空的情況)
-                P_NAME=$(jq -r '.Name // "Unknown"' single_plugin.json)
-                P_VER=$(jq -r '.AssemblyVersion // "0.0.0.0"' single_plugin.json)
-                P_DESC=$(jq -r '.Description // "No Description"' single_plugin.json | tr '\n' ' ' | sed 's/|/\\|/g')
-                echo "| $P_NAME | $P_VER | $P_DESC |" >> "$OUT_DIR/index.md"
+                # 將單個插件資訊合併到主 repo.json
+                jq --slurpfile new "$ROOT_DIR/single.json" '. + \$new' "$OUT_DIR/repo.json" > "$OUT_DIR/repo_new.json"
+                mv "$OUT_DIR/repo_new.json" "$OUT_DIR/repo.json"
+
+                # 提取資訊並寫入 Markdown 表格
+                P_NAME=$(jq -r '.Name // "Unknown"' "$ROOT_DIR/single.json")
+                P_VER=$(jq -r '.AssemblyVersion // "0.0.0.0"' "$ROOT_DIR/single.json")
+                P_DESC=$(jq -r '.Description // "No Description"' "$ROOT_DIR/single.json" | tr '\n' ' ' | sed 's/|/\\|/g')
+                echo "| \$P_NAME | \$P_VER | \$P_DESC |" >> "$OUT_DIR/index.md"
               fi
               
-              rm -rf "$TMP_WORK" single_plugin.json
+              # 清理當次循環的暫存
+              rm -rf "$TMP_WORK" "$ROOT_DIR/single.json"
             done
           fi
           
-          # 安全防護
+          # 5. 安全與防護檔案
           touch "$PLUGINS_OUT/index.html"
           touch "$OUT_DIR/.nojekyll"
 
