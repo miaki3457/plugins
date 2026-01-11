@@ -31,16 +31,16 @@ jobs:
           
           # 3. 生成 index.md (使用台灣時間)
           cat <<EOF > "$OUT_DIR/index.md"
----
-# 插件列表
-> **最後更新時間：** $(date +'%Y-%m-%d %H:%M:%S')
-
-將此網址複製到 Dalamud 的 Plugin Repos: 
-\`https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/repo.json\`
-
-| 名稱 | 版本 | 描述 |
-| :--- | :--- | :--- |
-EOF
+          ---
+          # 插件列表
+          > **最後更新時間：** $(date +'%Y-%m-%d %H:%M:%S')
+          
+          將此網址複製到 Dalamud 的 Plugin Repos: 
+          \`https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/repo.json\`
+          
+          | 名稱 | 版本 | 描述 |
+          | :--- | :--- | :--- |
+          EOF
           
           BASE_URL="https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}"
 
