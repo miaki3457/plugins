@@ -7,6 +7,8 @@ on:
 jobs:
   generate-repo:
     runs-on: ubuntu-latest
+    env:
+      TZ: Asia/Taipei  # 設定時區為台灣時間
     steps:
       - name: Checkout zips branch (Source)
         uses: actions/checkout@v3
@@ -15,60 +17,71 @@ jobs:
 
       - name: Process Zips and Build repo.json
         run: |
+          set -e  # 遇到錯誤立即停止，方便排查
           ROOT_DIR=$(pwd)
           OUT_DIR="$ROOT_DIR/output"
           PLUGINS_OUT="$OUT_DIR/plugins"
           
+          # 1. 確保輸出目錄乾淨
+          rm -rf "$OUT_DIR"
           mkdir -p "$PLUGINS_OUT"
+          
+          # 2. 初始化空的 repo.json 陣列
           echo "[]" > "$OUT_DIR/repo.json"
           
-          # 生成 index.md (使用 cat <<EOF 確保格式絕對正確)
+          # 3. 生成 index.md (使用台灣時間)
           cat <<EOF > "$OUT_DIR/index.md"
-          ---
-          
-          # 插件列表
-          > **最後更新時間：** $(date +'%Y-%m-%d %H:%M:%S')
-          
-          將此網址複製到 Dalamud 的 Plugin Repos: 
-          \`https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/repo.json\`
-          
-          | 名稱 | 版本 | 描述 |
-          | :--- | :--- | :--- |
-          EOF
+---
+# 插件列表
+> **最後更新時間：** $(date +'%Y-%m-%d %H:%M:%S')
+
+將此網址複製到 Dalamud 的 Plugin Repos: 
+\`https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/repo.json\`
+
+| 名稱 | 版本 | 描述 |
+| :--- | :--- | :--- |
+EOF
           
           BASE_URL="https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}"
 
-          for zipfile in plugins/*.zip; do
-            [ -e "$zipfile" ] || continue
-            filename=$(basename "$zipfile")
-            
-            TMP_WORK="$ROOT_DIR/temp_$(date +%s)"
-            mkdir -p "$TMP_WORK"
-            unzip -q "$zipfile" -d "$TMP_WORK" || true
-            
-            manifest_path=$(find "$TMP_WORK" -name "*.json" -exec grep -l "InternalName" {} + | head -n 1)
-            if [ -z "$manifest_path" ]; then rm -rf "$TMP_WORK"; continue; fi
-
-            plugin_dir=$(dirname "$manifest_path")
-            cd "$plugin_dir"
-            zip -r "$PLUGINS_OUT/$filename" ./*
-            cd "$ROOT_DIR"
-            
-            # 生成 JSON
-            jq -c --arg url "${BASE_URL}/plugins/${filename}" 'select(.InternalName != null) | . + {DownloadLinkInstall: $url}' "$manifest_path" > single_plugin.json
-            
-            # 寫入表格
-            P_NAME=$(jq -r '.Name' single_plugin.json)
-            P_VER=$(jq -r '.AssemblyVersion' single_plugin.json)
-            P_DESC=$(jq -r '.Description' single_plugin.json | tr '\n' ' ' | sed 's/|/\\|/g')
-            echo "| $P_NAME | $P_VER | $P_DESC |" >> "$OUT_DIR/index.md"
-
-            jq --slurpfile new single_plugin.json '. + $new' "$OUT_DIR/repo.json" > "$OUT_DIR/new_repo.json"
-            mv "$OUT_DIR/new_repo.json" "$OUT_DIR/repo.json"
-            rm -rf "$TMP_WORK" single_plugin.json
-          done
+          # 檢查是否有插件目錄
+          if [ -d "plugins" ]; then
+            for zipfile in plugins/*.zip; do
+              [ -e "$zipfile" ] || continue
+              filename=$(basename "$zipfile")
+              
+              TMP_WORK="$ROOT_DIR/temp_$(date +%s)_$filename"
+              mkdir -p "$TMP_WORK"
+              unzip -q "$zipfile" -d "$TMP_WORK" || true
+              
+              # 尋找包含 InternalName 的 manifest
+              manifest_path=$(find "$TMP_WORK" -name "*.json" -exec grep -l "InternalName" {} + | head -n 1)
+              
+              if [ -n "$manifest_path" ]; then
+                # 重新打包插件內容
+                plugin_dir=$(dirname "$manifest_path")
+                (cd "$plugin_dir" && zip -r "$PLUGINS_OUT/$filename" ./*)
+                
+                # 生成單個插件的 JSON (加入下載連結)
+                jq -c --arg url "${BASE_URL}/plugins/${filename}" '. + {DownloadLinkInstall: $url}' "$manifest_path" > single_plugin.json
+                
+                # --- 關鍵修正：確保合併進陣列 ---
+                # 使用 += [$new_node] 確保物件被包成陣列後再合併
+                jq --argjson new_node "$(cat single_plugin.json)" '. += [$new_node]' "$OUT_DIR/repo.json" > "$OUT_DIR/new_repo.json"
+                mv "$OUT_DIR/new_repo.json" "$OUT_DIR/repo.json"
+                
+                # 寫入 Markdown 表格 (處理 Description 為空的情況)
+                P_NAME=$(jq -r '.Name // "Unknown"' single_plugin.json)
+                P_VER=$(jq -r '.AssemblyVersion // "0.0.0.0"' single_plugin.json)
+                P_DESC=$(jq -r '.Description // "No Description"' single_plugin.json | tr '\n' ' ' | sed 's/|/\\|/g')
+                echo "| $P_NAME | $P_VER | $P_DESC |" >> "$OUT_DIR/index.md"
+              fi
+              
+              rm -rf "$TMP_WORK" single_plugin.json
+            done
+          fi
           
-          # 【關鍵防護】在輸出的 plugins 資料夾放一個空白首頁，防止別人目錄瀏覽
+          # 安全防護
           touch "$PLUGINS_OUT/index.html"
           touch "$OUT_DIR/.nojekyll"
 
