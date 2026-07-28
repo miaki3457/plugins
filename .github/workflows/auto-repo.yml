@@ -43,11 +43,11 @@ jobs:
             mkdir -p "$TMP_WORK"
             unzip -q "$zipfile" -d "$TMP_WORK" || true
             
-            # 【關鍵修正】解壓後開放寫入權限，避免某些 NuGet runtimes 資料夾唯讀導致刪不掉
-            chmod -R u+w "$TMP_WORK"
+            # 【關鍵修正】解壓後開放讀寫+可進入權限，避免 NuGet runtimes/ 資料夾唯讀導致後面存取/刪除失敗
+            chmod -R u+rwX "$TMP_WORK" 2>/dev/null || true
             
             manifest_path=$(find "$TMP_WORK" -name "*.json" -exec grep -l "InternalName" {} + | head -n 1)
-            if [ -z "$manifest_path" ]; then rm -rf "$TMP_WORK"; continue; fi
+            if [ -z "$manifest_path" ]; then rm -rf "$TMP_WORK" 2>/dev/null || true; continue; fi
             plugin_dir=$(dirname "$manifest_path")
             cd "$plugin_dir"
             zip -r "$PLUGINS_OUT/$filename" ./*
@@ -63,7 +63,7 @@ jobs:
             echo "| $P_NAME | $P_VER | $P_DESC |" >> "$OUT_DIR/index.md"
             jq --slurpfile new single_plugin.json '. + $new' "$OUT_DIR/repo.json" > "$OUT_DIR/new_repo.json"
             mv "$OUT_DIR/new_repo.json" "$OUT_DIR/repo.json"
-            rm -rf "$TMP_WORK" single_plugin.json
+            rm -rf "$TMP_WORK" single_plugin.json 2>/dev/null || true
           done
           
           # 【關鍵防護】在輸出的 plugins 資料夾放一個空白首頁，防止別人目錄瀏覽
