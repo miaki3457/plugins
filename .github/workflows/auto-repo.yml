@@ -19,14 +19,11 @@ jobs:
           OUT_DIR="$ROOT_DIR/output"
           PLUGINS_OUT="$OUT_DIR/plugins"
           
-          # 1. 強制刪除舊的 output，確保環境全乾淨
           rm -rf "$OUT_DIR"
           mkdir -p "$PLUGINS_OUT"
           
-          # 2. 建立一個全新的 repo.json
           echo "[]" > "$OUT_DIR/repo.json"
           
-          # 3. 生成 index.md 表頭
           cat <<EOF > "$OUT_DIR/index.md"
           ---
           # 插件列表
@@ -40,18 +37,14 @@ jobs:
           EOF
           
           BASE_URL="https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}"
-          # 4. 處理插件
           if [ -d "plugins" ]; then
             for zipfile in plugins/*.zip; do
               [ -e "$zipfile" ] || continue
               filename=$(basename "$zipfile")
               
               TMP_WORK=$(mktemp -d)
-              # 加上 -o 強制覆蓋，|| true 防止 Windows 路徑報錯中斷
               unzip -q -o "$zipfile" -d "$TMP_WORK" || true
               
-              # 【關鍵修正】解壓後開放讀寫+可進入權限
-              # u+rwX：檔案給讀寫，資料夾額外給執行(可進入)權限，避免 NuGet runtimes/ 資料夾唯讀導致後面存取/刪除失敗
               chmod -R u+rwX "$TMP_WORK" 2>/dev/null || true
               
               manifest_path=$(find "$TMP_WORK" -name "*.json" -exec grep -l "InternalName" {} + | head -n 1)
@@ -60,13 +53,12 @@ jobs:
                 plugin_dir=$(dirname "$manifest_path")
                 (cd "$plugin_dir" && zip -r "$PLUGINS_OUT/$filename" ./*)
                 
-                # 生成單個 JSON
                 jq -c --arg url "${BASE_URL}/plugins/${filename}" '. + {DownloadLinkInstall: $url}' "$manifest_path" > "$ROOT_DIR/single.json"
                 
-                # 【重點修正】使用 --argjson 確保資料是從檔案即時讀取的
-                jq --argjson new_node "$(cat "$ROOT_DIR/single.json")" '. += [$new_node]' "$OUT_DIR/repo.json" > "$OUT_DIR/repo_temp.json"
+                # 【關鍵修正】用 --slurpfile 直接讀檔，避免 command substitution 造成 Argument list too long
+                jq --slurpfile new_node "$ROOT_DIR/single.json" '. += $new_node' "$OUT_DIR/repo.json" > "$OUT_DIR/repo_temp.json"
                 mv "$OUT_DIR/repo_temp.json" "$OUT_DIR/repo.json"
-                # 寫入表格
+                
                 P_NAME=$(jq -r '.Name // "Unknown"' "$ROOT_DIR/single.json")
                 P_VER=$(jq -r '.AssemblyVersion // "0.0.0.0"' "$ROOT_DIR/single.json")
                 P_DESC=$(jq -r '.Description // "No Description"' "$ROOT_DIR/single.json" | tr '\n' ' ' | sed 's/|/\\|/g')
@@ -84,4 +76,4 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: ./output
           publish_branch: gh-pages
-          force_orphan: true  # <--- 加入這行，強制清空該分支並重新建立歷史，保證更新
+          force_orphan: true
