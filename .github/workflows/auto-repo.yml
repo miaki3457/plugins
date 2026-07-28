@@ -3,7 +3,6 @@ on:
   push:
     branches: [ zips ]  # 只有當你上傳東西到 zips 分支時才執行
   workflow_dispatch:
-
 jobs:
   generate-repo:
     runs-on: ubuntu-latest
@@ -12,7 +11,6 @@ jobs:
         uses: actions/checkout@v3
         with:
           ref: zips  # 抓取 zips 分支的檔案
-
       - name: Process Zips and Build repo.json
         run: |
           ROOT_DIR=$(pwd)
@@ -37,18 +35,19 @@ jobs:
           EOF
           
           BASE_URL="https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}"
-
           for zipfile in plugins/*.zip; do
             [ -e "$zipfile" ] || continue
             filename=$(basename "$zipfile")
             
-            TMP_WORK="$ROOT_DIR/temp_$(date +%s)"
+            TMP_WORK="$ROOT_DIR/temp_$(date +%s)_$RANDOM"
             mkdir -p "$TMP_WORK"
             unzip -q "$zipfile" -d "$TMP_WORK" || true
             
+            # 【關鍵修正】解壓後開放寫入權限，避免某些 NuGet runtimes 資料夾唯讀導致刪不掉
+            chmod -R u+w "$TMP_WORK"
+            
             manifest_path=$(find "$TMP_WORK" -name "*.json" -exec grep -l "InternalName" {} + | head -n 1)
             if [ -z "$manifest_path" ]; then rm -rf "$TMP_WORK"; continue; fi
-
             plugin_dir=$(dirname "$manifest_path")
             cd "$plugin_dir"
             zip -r "$PLUGINS_OUT/$filename" ./*
@@ -62,7 +61,6 @@ jobs:
             P_VER=$(jq -r '.AssemblyVersion' single_plugin.json)
             P_DESC=$(jq -r '.Description' single_plugin.json | tr '\n' ' ' | sed 's/|/\\|/g')
             echo "| $P_NAME | $P_VER | $P_DESC |" >> "$OUT_DIR/index.md"
-
             jq --slurpfile new single_plugin.json '. + $new' "$OUT_DIR/repo.json" > "$OUT_DIR/new_repo.json"
             mv "$OUT_DIR/new_repo.json" "$OUT_DIR/repo.json"
             rm -rf "$TMP_WORK" single_plugin.json
@@ -71,7 +69,6 @@ jobs:
           # 【關鍵防護】在輸出的 plugins 資料夾放一個空白首頁，防止別人目錄瀏覽
           touch "$PLUGINS_OUT/index.html"
           touch "$OUT_DIR/.nojekyll"
-
       - name: Deploy to GitHub Pages
         uses: peaceiris/actions-gh-pages@v3
         with:
